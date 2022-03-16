@@ -1,0 +1,194 @@
+---
+title: "Systematic Review Data Analysis"
+author: "Rebecca Lebeaux"
+date: "3/12/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, results = FALSE, echo = FALSE, warning = FALSE, message = FALSE}
+library(tidyverse)
+path_rahman_meta_child = "/Users/rebeccalebeaux/Documents/Hoen_Lab/Aim3_MetaAnalysis/Data extraction/Reanalyzed_data/march12_data/rahman2019/rahman2019_tables1.csv"
+path_rahman_meta_sample = "/Users/rebeccalebeaux/Documents/Hoen_Lab/Aim3_MetaAnalysis/Data extraction/Reanalyzed_data/march12_data/rahman2019/rahman2019_tables2.csv"
+path_rahman_arg = "/Users/rebeccalebeaux/Documents/Hoen_Lab/Aim3_MetaAnalysis/Data extraction/Reanalyzed_data/march12_data/rahman2019/rahman2019_argdata_tables.csv"
+path_rahman_result = "/Users/rebeccalebeaux/Documents/Hoen_Lab/Aim3_MetaAnalysis/Data extraction/Reanalyzed_data/march12_data/rahman2019/rahman_final_analysis_set.csv"
+
+path_thanert_meta = "/Users/rebeccalebeaux/Documents/Hoen_Lab/Aim3_MetaAnalysis/Data extraction/Reanalyzed_data/march12_data/thanert2021/Thanert2021_Metadata.csv"
+path_thanert_arg = "/Users/rebeccalebeaux/Documents/Hoen_Lab/Aim3_MetaAnalysis/Data extraction/Reanalyzed_data/march12_data/thanert2021/Thanert2021.csv"
+path_thanert_result = "/Users/rebeccalebeaux/Documents/Hoen_Lab/Aim3_MetaAnalysis/Data extraction/Reanalyzed_data/march12_data/thanert2021/thanert_final_analysis_set.csv"
+
+path_rose_final = "/Users/rebeccalebeaux/Documents/Hoen_Lab/Aim3_MetaAnalysis/Data extraction/Reanalyzed_data/march12_data/rose2017/Rose 2017 ReAnalyzed.csv"
+```
+
+Rahman 2019 data analysis richness and abundance
+```{r, results = TRUE, echo = TRUE, warning = FALSE, message = FALSE}
+Rahman_Metadata <- read.csv(path_rahman_meta_child) #Table S1
+
+Rahman_Metadata_Sample <- read.csv(path_rahman_meta_sample) #Table S2
+Rahman_ARG <- read.csv(path_rahman_arg) #Table S8
+
+#Calculating the richness for each sample
+richness_ARGs <- rowSums(Rahman_ARG[2:ncol(Rahman_ARG)] != 0)
+
+summed_RPKM <- rowSums(Rahman_ARG[2:ncol(Rahman_ARG)])
+
+#Only keep the sample name and richness
+df_args_rahman <- data.frame(sample = Rahman_ARG$sample, richness_ARGs, summed_RPKM)
+
+#Arrange by the last sample date which represents for this dataset the end of the antibiotic exposure window
+Rahman_Metadata_Sample_desc <- Rahman_Metadata_Sample %>%
+  arrange(infant, -DOL)
+
+#Only keep the last sample taken per infant (to make sure that we are actually taking the information for infants exposed or unexposed at the end of the period)
+descending_dataset_rahman_sample <- Rahman_Metadata_Sample_desc[!duplicated(Rahman_Metadata_Sample_desc$infant_number),] 
+
+
+#Merge the sample metadata and arg data 
+#metadata_arg_df <- left_join(descending_dataset_rahman_sample, df_args_rahman, by = "sample")
+
+#There are two samples with missing values -- for these infants will choose samples closest to last day of the period
+#missing_information_samples <- metadata_arg_df %>%
+  #filter(is.na(richness_ARGs) == T)
+
+#S2_005_028G1 & N1_011_070G1 should work as replacements within the day of the last sample taken
+#Rahman_Metadata_Sample_desc %>%
+ # filter(infant_number %in% missing_information_samples$infant_number)
+
+metadata_arg_df <- merge(descending_dataset_rahman_sample, df_args_rahman, by = "sample")
+
+two_missing_samples_meta <- Rahman_Metadata_Sample_desc %>%
+  filter(sample == "S2_005_028G1" | sample == "N1_011_070G1")
+
+two_missing_samples_richness <- df_args_rahman %>%
+  filter(sample == "S2_005_028G1" | sample == "N1_011_070G1") %>%
+  dplyr::select(-sample)
+
+#Combining metadata with richness data for the infants that did not have arg info for the last 2 samples
+two_missing_samples_addback <- cbind(two_missing_samples_meta, two_missing_samples_richness)
+
+#Creating the final set of 107 infants 
+rahman_dataset_107_infants <- rbind(metadata_arg_df,two_missing_samples_addback)
+
+#Make sure samples are in correct order
+rahman_dataset_107_infants <-rahman_dataset_107_infants %>%
+  arrange(infant)
+
+#Adding in information about never/ever exposure to antibiotics after the first week:
+
+antibiotic_exposure_child <- Rahman_Metadata %>%
+  mutate(binary_antibiotic = ifelse(postweek_ab == "TRUE", "1", "0")) %>%
+  dplyr::select(infant, binary_antibiotic) %>%
+  arrange(infant)
+
+#This agrees with number in paper - yay!
+antibiotic_exposure_child %>%
+  group_by(binary_antibiotic) %>%
+  summarise(n())
+ 
+final_rahman_richness_dataset <- cbind(rahman_dataset_107_infants, antibiotic_exposure_child)
+
+#After checing correct alignment, removing the duplicated column for infant
+final_rahman_richness_dataset <- final_rahman_richness_dataset[,-10]
+
+final_rahman_richness_dataset %>%
+  group_by(binary_antibiotic) %>%
+  summarise(n())
+
+#Linear regression model adjusted for DOL. Estimate for unexposed infants is 32.3 and for exposed infants is 32.3 - 2.7 = 29.6, stat significance is 0.09
+richness_rahman <- (lm(richness_ARGs ~ binary_antibiotic + DOL, data = final_rahman_richness_dataset))
+
+summary(richness_rahman)
+
+#Linear regression model adjusted for DOL. Estimate for unexposed infants is 659.3 and for exposed infants is 659.3 + 95.5 = 754.8, stat significance is 0.066
+abundance_rahman <- (lm(summed_RPKM ~ binary_antibiotic + DOL, data = final_rahman_richness_dataset))
+
+summary(abundance_rahman)
+
+#percent difference by group
+100*abundance_rahman$coefficients[2]/abundance_rahman$coefficients[1]
+
+100*richness_rahman$coefficients[2]/richness_rahman$coefficients[1]
+
+#Minimum and maximum days of life
+min(final_rahman_richness_dataset$DOL)
+max(final_rahman_richness_dataset$DOL)
+
+write.csv(final_rahman_richness_dataset, path_rahman_result, row.names = F)
+
+```
+
+Evaluating Full Resistance Load and Alpha Diversity of All Available Samples (SBS) in Thanert 2021. Only consider antibiotic use in the past month and not current antibiotic usage
+```{r, results = TRUE, echo = TRUE, warning = FALSE, message = FALSE}
+Thanert_data <- read.csv(path_thanert_arg, header = T) #Supplemenatary Data Table 5 for arg data
+Thanert_metadata <- read.csv(path_thanert_meta) #Supplementary Data Table 1
+
+#Resistance load per child
+summed_RPKM <- rowSums(Thanert_data[2:ncol(Thanert_data)])
+
+#Number ARGs per child
+richness_ARGs <- rowSums(Thanert_data[2:ncol(Thanert_data)] != 0)
+
+#Add a column with the summed abundance in RPKM
+#Remove the 2 children without information on antibiotics
+
+dataset_Thanert <- Thanert_metadata %>%
+  mutate(summed_RPKM = summed_RPKM, richness_ARGs = richness_ARGs) %>%
+  filter(is.na(Thanert_metadata$Antibiotics_month) == F) 
+
+#To take earlist data sample
+ascending_dataset_Thanert <- dataset_Thanert[!duplicated(dataset_Thanert$Patient_ID),] 
+
+#Abundance at earlist time point. Estimate for unexposed is 4234 and exposed is 4234+2036.6 = 6270.574. P-val = 0.51
+abundance_thanert <- (lm(ascending_dataset_Thanert$summed_RPKM ~ ascending_dataset_Thanert$Antibiotics_month + ascending_dataset_Thanert$Day_of_life))
+
+summary(abundance_thanert)
+
+#Richness at earliest time point. Esitmate for unexposed is 37.8 and exposed is 37.8 + 7.4 = 45.2. P-val = 0.59
+richness_thanert <- (lm(ascending_dataset_Thanert$richness_ARGs ~ ascending_dataset_Thanert$Antibiotics_month+ascending_dataset_Thanert$Day_of_life))
+
+summary(richness_thanert)
+
+#10 did not have antibiotic exposure in past month, while 9 did
+ascending_dataset_Thanert  %>%
+  group_by(Antibiotics_month) %>%
+  summarise(n())
+
+#percent difference by group
+100*abundance_thanert$coefficients[2]/abundance_thanert$coefficients[1]
+
+100*richness_thanert$coefficients[2]/richness_thanert$coefficients[1]
+
+#Min and max days do vary significantly between about 3 weeks and 4 years
+min(ascending_dataset_Thanert$Day_of_life)
+max(ascending_dataset_Thanert$Day_of_life)
+
+write.csv(ascending_dataset_Thanert, path_thanert_result, row.names = F)
+```
+
+Rose 2017 richness analysis
+```{r, results = TRUE, echo = TRUE, warning = FALSE, message = FALSE}
+
+#Richness per sample was calculated using ARG information from Supplemental Table S6 combined with Richness information from Table S1. 
+Condensed_Table <- read.csv(path_rose_final)
+head(Condensed_Table)
+
+Condensed_Table$Binary_antibiotic <- as.character(Condensed_Table$Binary_antibiotic)
+
+#only two children were not exposed to antibiotics during the time period, 9 exposed to antibiotics
+Condensed_Table %>%
+  group_by(Binary_antibiotic) %>%
+  summarise(n())
+
+#Linear regression to estimate the richness of samples by antibiotic exposure. The unexposed estimate is 9.2 and exposed is 9.2-3.3 = 5.9. P-value = 0.45
+rose_richness <- (lm(Condensed_Table$Richness.per.sample ~ Condensed_Table$Binary_antibiotic+Condensed_Table$DOL.of.Sample))
+
+summary(rose_richness)
+100*rose_richness$coefficients[2]/rose_richness$coefficients[1]
+
+#Percent change by group
+min(Condensed_Table$DOL.of.Sample)
+max(Condensed_Table$DOL.of.Sample)
+```
